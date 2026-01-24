@@ -15,18 +15,22 @@ from core.keyboards import (
 )
 
 from core.payments import (
-    set_payment_config,
-    get_payment_text,
-    create_payment,
-    has_pending,
-    pop_payment,
-    any_pending
+    set_payment_config, get_payment_text,
+    create_payment, has_pending,
+    pop_payment, any_pending
 )
 
 from core.subscription import (
-    activate,
-    is_active,
-    days_left
+    activate, is_active, days_left
+)
+
+from core.zip_manager import (
+    upload_zip, withdraw_zip,
+    has_zip, get_zip
+)
+
+from core.forward_engine import (
+    start_forward, stop_forward, is_running
 )
 
 # ================= HELPERS =================
@@ -41,7 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     get_user(uid)
 
     await update.message.reply_text(
-        "🤖 Forwarding Automation Bot\n\nMenu:",
+        "🤖 Forwarding Automation Bot (Commit-3)\n\nMenu:",
         reply_markup=main_kb(is_owner(uid))
     )
 
@@ -63,108 +67,112 @@ async def router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state == "MAIN":
         if text == "💳 Subscription":
             push(uid, "SUB")
-            await update.message.reply_text(
-                "Choose plan:",
-                reply_markup=sub_kb()
-            )
+            await update.message.reply_text("Choose plan:", reply_markup=sub_kb())
 
         elif text == "📊 Status":
             if is_active(uid):
-                left = days_left(uid)
-                msg = f"✅ Subscription Active\n⏳ {left} days left"
+                msg = f"✅ Active\n⏳ {days_left(uid)} days left"
             else:
                 msg = "❌ No active subscription"
-
-            await update.message.reply_text(
-                msg,
-                reply_markup=main_kb(is_owner(uid))
-            )
+            await update.message.reply_text(msg, reply_markup=main_kb(is_owner(uid)))
 
         elif text == "📦 ZIP":
             push(uid, "ZIP")
-            await update.message.reply_text(
-                "ZIP Menu:",
-                reply_markup=zip_kb()
-            )
+            await update.message.reply_text("ZIP Menu:", reply_markup=zip_kb())
 
         elif text == "⚙️ Setup":
             push(uid, "SETUP")
-            await update.message.reply_text(
-                "Setup Menu:",
-                reply_markup=setup_kb()
-            )
+            await update.message.reply_text("Setup Menu:", reply_markup=setup_kb())
 
         elif text == "🚀 Start":
-            user["running"] = True
-            await update.message.reply_text(
-                "▶️ Forward STARTED",
-                reply_markup=main_kb(is_owner(uid))
-            )
+            if not is_active(uid):
+                await update.message.reply_text(
+                    "❌ Subscription required",
+                    reply_markup=main_kb(is_owner(uid))
+                )
+                return
+
+            msg = user.get("message")
+            interval = user.get("interval")
+
+            if not msg or not interval:
+                await update.message.reply_text(
+                    "❌ Set message & time first",
+                    reply_markup=main_kb(is_owner(uid))
+                )
+                return
+
+            if start_forward(context.bot, uid, update.effective_chat.id, msg, interval):
+                await update.message.reply_text(
+                    "▶️ Forward STARTED",
+                    reply_markup=main_kb(is_owner(uid))
+                )
+            else:
+                await update.message.reply_text(
+                    "⚠️ Already running",
+                    reply_markup=main_kb(is_owner(uid))
+                )
 
         elif text == "⛔ Stop":
-            user["running"] = False
-            await update.message.reply_text(
-                "⛔ Forward STOPPED",
-                reply_markup=main_kb(is_owner(uid))
-            )
-
-        elif text == "❓ Help":
-            await update.message.reply_text(
-                "Use buttons below.\nBack works step-by-step.",
-                reply_markup=main_kb(is_owner(uid))
-            )
+            if stop_forward(uid):
+                await update.message.reply_text(
+                    "⛔ Forward STOPPED",
+                    reply_markup=main_kb(is_owner(uid))
+                )
+            else:
+                await update.message.reply_text(
+                    "⚠️ Not running",
+                    reply_markup=main_kb(is_owner(uid))
+                )
 
         elif text == "👑 Owner Panel" and is_owner(uid):
             push(uid, "OWNER")
             await update.message.reply_text(
-                "👑 Owner Panel:",
+                "Owner Panel:",
                 reply_markup=owner_kb()
             )
 
         else:
             await update.message.reply_text(
-                "Choose option from menu.",
+                "Choose from menu",
                 reply_markup=main_kb(is_owner(uid))
             )
         return
 
-    # ---------- SUB (A, B, C) ----------
+    # ---------- SUB ----------
     if state == "SUB":
         if text == "🗓 Weekly":
             create_payment(uid, 7)
-            await update.message.reply_text(
-                get_payment_text(),
-                reply_markup=[["⬅️ Back"]]
-            )
+            await update.message.reply_text(get_payment_text())
 
         elif text == "📅 Monthly":
             create_payment(uid, 30)
-            await update.message.reply_text(
-                get_payment_text(),
-                reply_markup=[["⬅️ Back"]]
-            )
-
-        else:
-            await update.message.reply_text(
-                "Choose plan:",
-                reply_markup=sub_kb()
-            )
+            await update.message.reply_text(get_payment_text())
         return
 
     # ---------- ZIP ----------
     if state == "ZIP":
-        await update.message.reply_text(
-            "ZIP system will be added in Commit-3",
-            reply_markup=zip_kb()
-        )
+        if text == "📤 Upload ZIP":
+            user["await_zip"] = True
+            await update.message.reply_text("Send ZIP file")
+
+        elif text == "🗑 Withdraw ZIP":
+            z = withdraw_zip(uid)
+            if z:
+                await update.message.reply_text(f"ZIP removed: {z}")
+            else:
+                await update.message.reply_text("No ZIP found")
         return
 
     # ---------- SETUP ----------
     if state == "SETUP":
-        await update.message.reply_text(
-            "Setup features in Commit-3",
-            reply_markup=setup_kb()
-        )
+        if text == "✍ Set Message":
+            user["await_msg"] = True
+            await update.message.reply_text("Send message text")
+
+        elif text == "⏱ Set Time":
+            user["await_time"] = True
+            await update.message.reply_text("Send interval in minutes")
         return
 
     # ---------- OWNER ----------
@@ -179,63 +187,39 @@ async def router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "💳 Pending Payments":
             push(uid, "PENDING")
             pid = any_pending()
-            if not pid:
+            if pid:
                 await update.message.reply_text(
-                    "No pending payments.",
-                    reply_markup=owner_kb()
+                    f"Pending from user: {pid}",
+                    reply_markup=pending_kb()
                 )
             else:
                 await update.message.reply_text(
-                    f"Pending payment from user: {pid}",
-                    reply_markup=pending_kb()
+                    "No pending",
+                    reply_markup=owner_kb()
                 )
-
-        elif text == "⚙️ System Control":
-            await update.message.reply_text(
-                "System OK",
-                reply_markup=owner_kb()
-            )
-
-        elif text == "📊 Reports":
-            await update.message.reply_text(
-                "Reports available later",
-                reply_markup=owner_kb()
-            )
         return
 
-    # ---------- PAYSET (D, E) ----------
+    # ---------- PAYSET ----------
     if state == "PAYSET" and is_owner(uid):
         user["set_pay"] = text
-        await update.message.reply_text(
-            "Send value:",
-            reply_markup=[["⬅️ Back"]]
-        )
+        await update.message.reply_text("Send value")
         return
 
-    # ---------- PENDING STATE (F, G) ----------
+    # ---------- PENDING ----------
     if state == "PENDING" and is_owner(uid):
         pid = any_pending()
         if not pid:
-            await update.message.reply_text(
-                "No pending payments.",
-                reply_markup=owner_kb()
-            )
+            await update.message.reply_text("No pending", reply_markup=owner_kb())
             return
 
         if text == "✅ Approve":
             info = pop_payment(pid)
             activate(pid, info["days"])
-            await update.message.reply_text(
-                "✅ Subscription Approved",
-                reply_markup=owner_kb()
-            )
+            await update.message.reply_text("Approved", reply_markup=owner_kb())
 
         elif text == "❌ Reject":
             pop_payment(pid)
-            await update.message.reply_text(
-                "❌ Payment Rejected",
-                reply_markup=owner_kb()
-            )
+            await update.message.reply_text("Rejected", reply_markup=owner_kb())
         return
 
 
@@ -243,82 +227,75 @@ async def router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def free(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = get_user(uid)
-    text = update.message.text
 
-    # USER sends payment proof
-    if has_pending(uid):
-        await update.message.reply_text(
-            "✅ Payment received.\nWaiting for owner approval.",
-            reply_markup=main_kb(is_owner(uid))
-        )
+    # ZIP upload
+    if user.get("await_zip") and update.message.document:
+        upload_zip(uid, update.message.document.file_name)
+        user["await_zip"] = False
+        await update.message.reply_text("✅ ZIP uploaded")
         return
 
-    # OWNER saves payment config
-    if is_owner(uid) and user.get("set_pay"):
-        key = user["set_pay"]
+    # message set
+    if user.get("await_msg"):
+        user["message"] = update.message.text
+        user["await_msg"] = False
+        await update.message.reply_text("✅ Message saved")
+        return
 
-        if key == "🏦 Set UPI":
-            set_payment_config("upi", text)
-        elif key == "🟡 Set Binance":
-            set_payment_config("binance", text)
-        elif key == "🔴 Set TRC20":
-            set_payment_config("trc20", text)
-        elif key == "🟢 Set BEP20":
-            set_payment_config("bep20", text)
+    # time set
+    if user.get("await_time"):
+        try:
+            user["interval"] = int(update.message.text)
+            await update.message.reply_text("✅ Time saved")
+        except:
+            await update.message.reply_text("Send number only")
+        user["await_time"] = False
+        return
+
+    # payment proof
+    if has_pending(uid):
+        await update.message.reply_text("✅ Payment received, waiting approval")
+        return
+
+    # owner set payment config
+    if is_owner(uid) and user.get("set_pay"):
+        if user["set_pay"] == "🏦 Set UPI":
+            set_payment_config("upi", update.message.text)
+        elif user["set_pay"] == "🟡 Set Binance":
+            set_payment_config("binance", update.message.text)
+        elif user["set_pay"] == "🔴 Set TRC20":
+            set_payment_config("trc20", update.message.text)
+        elif user["set_pay"] == "🟢 Set BEP20":
+            set_payment_config("bep20", update.message.text)
 
         user["set_pay"] = None
-        await update.message.reply_text(
-            "✅ Payment method saved",
-            reply_markup=owner_kb()
-        )
+        await update.message.reply_text("✅ Saved")
         return
 
 
 # ================= SHOW STATE =================
-async def show_state(update: Update, state: str, uid: int):
+async def show_state(update, state, uid):
     if state == "MAIN":
-        await update.message.reply_text(
-            "Main Menu:",
-            reply_markup=main_kb(is_owner(uid))
-        )
+        await update.message.reply_text("Main Menu:", reply_markup=main_kb(is_owner(uid)))
     elif state == "SUB":
-        await update.message.reply_text(
-            "Choose plan:",
-            reply_markup=sub_kb()
-        )
+        await update.message.reply_text("Choose plan:", reply_markup=sub_kb())
     elif state == "ZIP":
-        await update.message.reply_text(
-            "ZIP Menu:",
-            reply_markup=zip_kb()
-        )
+        await update.message.reply_text("ZIP Menu:", reply_markup=zip_kb())
     elif state == "SETUP":
-        await update.message.reply_text(
-            "Setup Menu:",
-            reply_markup=setup_kb()
-        )
+        await update.message.reply_text("Setup Menu:", reply_markup=setup_kb())
     elif state == "OWNER":
-        await update.message.reply_text(
-            "Owner Panel:",
-            reply_markup=owner_kb()
-        )
+        await update.message.reply_text("Owner Panel:", reply_markup=owner_kb())
     elif state == "PAYSET":
-        await update.message.reply_text(
-            "Payment Settings:",
-            reply_markup=payset_kb()
-        )
+        await update.message.reply_text("Payment Settings:", reply_markup=payset_kb())
     elif state == "PENDING":
-        await update.message.reply_text(
-            "Pending Payments:",
-            reply_markup=pending_kb()
-        )
+        await update.message.reply_text("Pending:", reply_markup=pending_kb())
 
 
 # ================= MAIN =================
 app = Application.builder().token(BOT_TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT, router))
+app.add_handler(MessageHandler(filters.TEXT | filters.Document.ALL, router))
 app.add_handler(MessageHandler(filters.ALL, free))
 
-print("🤖 Commit-2 FULL bot.py running (A–G + PENDING)")
+print("🤖 Commit-3 FULL SYSTEM RUNNING")
 app.run_polling()
