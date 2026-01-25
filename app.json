@@ -1,0 +1,26 @@
+{
+  "name": "Forwarding Automation Bot",
+  "description": "Telegram forwarding bot with subscription & payment system",
+  "repository": "https://github.com/babaji067/forwarding-bot",
+  "keywords": ["telegram", "bot", "forwarding", "subscription"],
+  "env": {
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token from BotFather",
+      "required": true
+    },
+    "OWNER_ID": {
+      "description": "Telegram numeric user ID (owner)",
+      "required": true
+    },
+    "MONGO_URI": {
+      "description": "MongoDB Atlas URI (optional)",
+      "required": false
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "eco"
+    }
+  }
+}
